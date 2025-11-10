@@ -106,4 +106,72 @@ export const api = {
   },
   deleteAsset: (id: string) => apiClient.delete(`/assets/${id}`),
   getAssetUrl: (id: string) => apiClient.get(`/assets/${id}/url`),
+
+  // Transcriptions
+  createTranscription: (videoId: string, data: { audioStorageKey: string; language?: string }) =>
+    apiClient.post(`/transcriptions/video/${videoId}`, data),
+  getTranscription: (videoId: string) => apiClient.get(`/transcriptions/video/${videoId}`),
+  updateTranscription: (transcriptionId: string, segments: any[]) =>
+    apiClient.put(`/transcriptions/${transcriptionId}`, { segments }),
+  generateSubtitles: (transcriptionId: string, options?: { maxCharsPerLine?: number; maxDuration?: number }) =>
+    apiClient.post(`/transcriptions/${transcriptionId}/subtitles`, options),
+  exportTranscription: (transcriptionId: string, format: 'srt' | 'vtt' | 'txt' | 'json') =>
+    apiClient.get(`/transcriptions/${transcriptionId}/export?format=${format}`),
+  getSubtitleTracks: (videoId: string) =>
+    apiClient.get(`/transcriptions/subtitles/video/${videoId}`),
+  updateSubtitleTrack: (trackId: string, data: { entries?: any[]; style?: any }) =>
+    apiClient.put(`/transcriptions/subtitles/${trackId}`, data),
+
+  // Eye Tracking
+  startEyeTracking: (videoId: string, data: {
+    videoStorageKey: string;
+    targetPosition?: { x: number; y: number; z: number };
+    correctionStrength?: number;
+    smoothing?: number;
+    preserveBlinking?: boolean;
+    framerate?: number;
+  }) => apiClient.post(`/eye-tracking/video/${videoId}`, data),
+  getEyeTrackingData: (videoId: string, keyframesOnly?: boolean) =>
+    apiClient.get(`/eye-tracking/video/${videoId}`, { params: { keyframesOnly } }),
+  updateEyeTrackingConfig: (eyeTrackingId: string, config: {
+    targetPosition?: { x: number; y: number; z: number };
+    correctionStrength?: number;
+    smoothing?: number;
+  }) => apiClient.put(`/eye-tracking/${eyeTrackingId}`, config),
+  applyEyeCorrection: (videoId: string, data: { eyeTrackingId: string; outputPath: string }) =>
+    apiClient.post(`/eye-tracking/video/${videoId}/apply`, data),
+  getEyeContactMetrics: (videoId: string) =>
+    apiClient.get(`/eye-tracking/video/${videoId}/metrics`),
+  getGazeHeatmap: (videoId: string, width?: number, height?: number) =>
+    apiClient.get(`/eye-tracking/video/${videoId}/heatmap`, { params: { width, height } }),
+
+  // Timeline
+  getTimeline: (videoId: string) => apiClient.get(`/timeline/video/${videoId}`),
+  createClip: (videoId: string, data: {
+    type: 'video' | 'audio' | 'image' | 'text' | 'avatar';
+    startTime: number;
+    endTime: number;
+    trackIndex?: number;
+    sourceAssetId?: string;
+    sourceUrl?: string;
+    properties?: any;
+  }) => apiClient.post(`/timeline/video/${videoId}/clips`, data),
+  updateClip: (clipId: string, data: any) => apiClient.put(`/timeline/clips/${clipId}`, data),
+  deleteClip: (clipId: string) => apiClient.delete(`/timeline/clips/${clipId}`),
+  duplicateClip: (clipId: string, offsetTime?: number) =>
+    apiClient.post(`/timeline/clips/${clipId}/duplicate`, { offsetTime }),
+  trimClip: (clipId: string, startTime: number, endTime: number) =>
+    apiClient.post(`/timeline/clips/${clipId}/trim`, { startTime, endTime }),
+  splitClip: (clipId: string, splitTime: number) =>
+    apiClient.post(`/timeline/clips/${clipId}/split`, { splitTime }),
+  checkCollisions: (videoId: string) =>
+    apiClient.get(`/timeline/video/${videoId}/collisions`),
+  arrangeClips: (videoId: string) =>
+    apiClient.post(`/timeline/video/${videoId}/arrange`),
+  validateTimeline: (videoId: string) =>
+    apiClient.get(`/timeline/video/${videoId}/validate`),
+  exportTimeline: (videoId: string, format: 'ffmpeg' | 'json') =>
+    apiClient.get(`/timeline/video/${videoId}/export?format=${format}`),
+  bulkUpdateClips: (videoId: string, clips: any[]) =>
+    apiClient.put(`/timeline/video/${videoId}/bulk`, { clips }),
 };

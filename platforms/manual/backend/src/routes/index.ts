@@ -5,6 +5,9 @@ import projectRoutes from './project.routes';
 import characterRoutes from './character.routes';
 import videoRoutes from './video.routes';
 import assetRoutes from './asset.routes';
+import transcriptionRoutes from './transcription.routes';
+import eyeTrackingRoutes from './eyeTracking.routes';
+import timelineRoutes from './timeline.routes';
 
 const router = Router();
 
@@ -15,5 +18,8 @@ router.use('/projects', projectRoutes);
 router.use('/characters', characterRoutes);
 router.use('/videos', videoRoutes);
 router.use('/assets', assetRoutes);
+router.use('/transcriptions', transcriptionRoutes);
+router.use('/eye-tracking', eyeTrackingRoutes);
+router.use('/timeline', timelineRoutes);
 
 export default router;
