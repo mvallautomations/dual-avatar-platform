@@ -1,0 +1,394 @@
+version: '3.8'
+
+# ====================================
+# DUAL AVATAR PLATFORM
+# Complete infrastructure for manual + autonomous platforms
+# ====================================
+
+networks:
+  # Shared network for communication between platforms
+  shared-network:
+    driver: bridge
+    
+  # Internal network for manual platform
+  manual-network:
+    driver: bridge
+    internal: true
+    
+  # Internal network for autonomous platform
+  autonomous-network:
+    driver: bridge
+    internal: true
+
+volumes:
+  # Shared storage volumes
+  minio-data:
+  n8n-data:
+  postgres-n8n-data:
+  
+  # Manual platform volumes
+  postgres-manual-data:
+  redis-manual-data:
+  
+  # Autonomous platform volumes
+  postgres-auto-data:
+  redis-auto-data:
+  ollama-data:
+  comfyui-data:
+  
+  # Monitoring volumes
+  prometheus-data:
+  grafana-data:
+
+services:
+  # ====================================
+  # SHARED SERVICES
+  # ====================================
+  
+  # MinIO - Shared Object Storage
+  minio-shared:
+    image: minio/minio:latest
+    container_name: minio-shared
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_EXTERNAL_ENDPOINT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    networks:
+      - shared-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # MinIO Client - Initialize buckets
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      - minio-shared
+    networks:
+      - shared-network
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio-shared:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}); do
+        echo 'Waiting for MinIO...';
+        sleep 5;
+      done;
+      /usr/bin/mc mb --ignore-existing minio/videos;
+      /usr/bin/mc mb --ignore-existing minio/images;
+      /usr/bin/mc mb --ignore-existing minio/audio;
+      /usr/bin/mc mb --ignore-existing minio/characters;
+      /usr/bin/mc mb --ignore-existing minio/raw;
+      /usr/bin/mc mb --ignore-existing minio/manual;
+      /usr/bin/mc mb --ignore-existing minio/auto;
+      /usr/bin/mc policy set download minio/videos;
+      /usr/bin/mc policy set download minio/images;
+      /usr/bin/mc policy set download minio/audio;
+      echo 'Buckets initialized successfully';
+      "
+
+  # PostgreSQL for n8n
+  postgres-n8n:
+    image: postgres:15-alpine
+    container_name: postgres-n8n
+    environment:
+      POSTGRES_DB: ${N8N_DB_POSTGRESDB_DATABASE:-n8n}
+      POSTGRES_USER: ${N8N_DB_POSTGRESDB_USER:-n8n}
+      POSTGRES_PASSWORD: ${N8N_DB_POSTGRESDB_PASSWORD}
+    volumes:
+      - postgres-n8n-data:/var/lib/postgresql/data
+    networks:
+      - shared-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${N8N_DB_POSTGRESDB_USER:-n8n}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # n8n - Workflow Automation
+  n8n-shared:
+    image: n8nio/n8n:latest
+    container_name: n8n-shared
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-0.0.0.0}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - N8N_USER_MANAGEMENT_DISABLED=${N8N_USER_MANAGEMENT_DISABLED:-false}
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - DB_TYPE=${N8N_DB_TYPE:-postgresdb}
+      - DB_POSTGRESDB_HOST=${N8N_DB_POSTGRESDB_HOST:-postgres-n8n}
+      - DB_POSTGRESDB_PORT=${N8N_DB_POSTGRESDB_PORT:-5432}
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_POSTGRESDB_DATABASE:-n8n}
+      - DB_POSTGRESDB_USER=${N8N_DB_POSTGRESDB_USER:-n8n}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_POSTGRESDB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-your-encryption-key-here}
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./shared/workflows:/workflows:ro
+    depends_on:
+      postgres-n8n:
+        condition: service_healthy
+      minio-shared:
+        condition: service_healthy
+    networks:
+      - shared-network
+    restart: unless-stopped
+
+  # ====================================
+  # MONITORING STACK
+  # ====================================
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    volumes:
+      - ./shared/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - shared-network
+    restart: unless-stopped
+
+  # Grafana - Monitoring Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./shared/monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./shared/monitoring/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - shared-network
+    restart: unless-stopped
+
+  # ====================================
+  # MANUAL PLATFORM (UI-Driven)
+  # ====================================
+
+  # PostgreSQL for Manual Platform
+  postgres-manual:
+    image: postgres:15-alpine
+    container_name: postgres-manual
+    environment:
+      POSTGRES_DB: ${MANUAL_POSTGRES_DB}
+      POSTGRES_USER: ${MANUAL_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${MANUAL_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-manual-data:/var/lib/postgresql/data
+    networks:
+      - manual-network
+      - shared-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MANUAL_POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Manual Platform
+  redis-manual:
+    image: redis:7-alpine
+    container_name: redis-manual
+    command: redis-server --requirepass ${MANUAL_REDIS_PASSWORD}
+    volumes:
+      - redis-manual-data:/data
+    networks:
+      - manual-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Manual Platform Backend
+  manual-backend:
+    build:
+      context: ./platforms/manual/backend
+      dockerfile: Dockerfile
+    container_name: manual-backend
+    ports:
+      - "${MANUAL_BACKEND_PORT:-8080}:8080"
+    environment:
+      - DATABASE_URL=postgresql://${MANUAL_POSTGRES_USER}:${MANUAL_POSTGRES_PASSWORD}@postgres-manual:5432/${MANUAL_POSTGRES_DB}
+      - REDIS_URL=redis://:${MANUAL_REDIS_PASSWORD}@redis-manual:6379/0
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - STORAGE_BUCKET_PREFIX=${MANUAL_STORAGE_BUCKET_PREFIX}
+      - API_KEY=${MANUAL_API_KEY}
+      - JWT_SECRET=${MANUAL_JWT_SECRET}
+    depends_on:
+      postgres-manual:
+        condition: service_healthy
+      redis-manual:
+        condition: service_healthy
+      minio-shared:
+        condition: service_healthy
+    networks:
+      - manual-network
+      - shared-network
+    restart: unless-stopped
+
+  # Manual Platform Frontend
+  manual-frontend:
+    build:
+      context: ./platforms/manual/frontend
+      dockerfile: Dockerfile
+    container_name: manual-frontend
+    ports:
+      - "${MANUAL_FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://manual-backend:8080
+      - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
+    depends_on:
+      - manual-backend
+    networks:
+      - manual-network
+      - shared-network
+    restart: unless-stopped
+
+  # ====================================
+  # AUTONOMOUS PLATFORM (Batch)
+  # ====================================
+
+  # PostgreSQL for Autonomous Platform
+  postgres-auto:
+    image: postgres:15-alpine
+    container_name: postgres-auto
+    environment:
+      POSTGRES_DB: ${AUTO_POSTGRES_DB}
+      POSTGRES_USER: ${AUTO_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${AUTO_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-auto-data:/var/lib/postgresql/data
+    networks:
+      - autonomous-network
+      - shared-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTO_POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Autonomous Platform
+  redis-auto:
+    image: redis:7-alpine
+    container_name: redis-auto
+    command: redis-server --requirepass ${AUTO_REDIS_PASSWORD}
+    volumes:
+      - redis-auto-data:/data
+    networks:
+      - autonomous-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Ollama - Local LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "${AUTO_OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${AUTO_GPU_DEVICE:-0}']
+              capabilities: [gpu]
+    networks:
+      - autonomous-network
+      - shared-network
+    restart: unless-stopped
+
+  # ComfyUI - Image Generation
+  comfyui:
+    build:
+      context: ./platforms/autonomous/comfyui
+      dockerfile: Dockerfile
+    container_name: comfyui
+    ports:
+      - "${AUTO_COMFYUI_PORT:-8188}:8188"
+    volumes:
+      - comfyui-data:/app/models
+      - ./platforms/autonomous/comfyui/workflows:/app/workflows:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${AUTO_GPU_DEVICE:-0}']
+              capabilities: [gpu]
+    networks:
+      - autonomous-network
+    restart: unless-stopped
+
+  # Autonomous Orchestrator
+  autonomous-orchestrator:
+    build:
+      context: ./platforms/autonomous/orchestrator
+      dockerfile: Dockerfile
+    container_name: autonomous-orchestrator
+    ports:
+      - "${AUTO_ORCHESTRATOR_PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=postgresql://${AUTO_POSTGRES_USER}:${AUTO_POSTGRES_PASSWORD}@postgres-auto:5433/${AUTO_POSTGRES_DB}
+      - REDIS_URL=redis://:${AUTO_REDIS_PASSWORD}@redis-auto:6380/0
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - STORAGE_BUCKET_PREFIX=${AUTO_STORAGE_BUCKET_PREFIX}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - COMFYUI_BASE_URL=${COMFYUI_BASE_URL}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      postgres-auto:
+        condition: service_healthy
+      redis-auto:
+        condition: service_healthy
+      minio-shared:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      comfyui:
+        condition: service_started
+    networks:
+      - autonomous-network
+      - shared-network
+    restart: unless-stopped
