@@ -1,0 +1,84 @@
+# Prometheus Configuration
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'dual-avatar-platform'
+    environment: 'production'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Manual Platform Backend
+  - job_name: 'manual-backend'
+    static_configs:
+      - targets: ['manual-backend:8080']
+    metrics_path: '/metrics'
+
+  # Autonomous Platform Orchestrator
+  - job_name: 'autonomous-orchestrator'
+    static_configs:
+      - targets: ['autonomous-orchestrator:8000']
+    metrics_path: '/metrics'
+
+  # PostgreSQL Manual
+  - job_name: 'postgres-manual'
+    static_configs:
+      - targets: ['postgres-manual:5432']
+
+  # PostgreSQL Auto
+  - job_name: 'postgres-auto'
+    static_configs:
+      - targets: ['postgres-auto:5432']
+
+  # Redis Manual
+  - job_name: 'redis-manual'
+    static_configs:
+      - targets: ['redis-manual:6379']
+
+  # Redis Auto
+  - job_name: 'redis-auto'
+    static_configs:
+      - targets: ['redis-auto:6379']
+
+  # MinIO
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: '/minio/v2/metrics/cluster'
+
+  # n8n
+  - job_name: 'n8n'
+    static_configs:
+      - targets: ['n8n:5678']
+
+  # Ollama
+  - job_name: 'ollama'
+    static_configs:
+      - targets: ['ollama:11434']
+
+  # ComfyUI
+  - job_name: 'comfyui'
+    static_configs:
+      - targets: ['comfyui:8188']
+
+  # Node Exporter (if added)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
